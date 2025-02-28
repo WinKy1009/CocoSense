@@ -1,0 +1,7 @@
+flet
+torch
+opencv-python
+pillow
+numpy
+ultralytics
+flask
