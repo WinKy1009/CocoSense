@@ -1,6 +1,5 @@
 flet
 tensorflow
-tflite-runtime
 tensorflow-cpu
 numpy
 pillow
