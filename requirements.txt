@@ -1,7 +1,4 @@
 flet
-torch
-opencv-python
-pillow
+tensorflow
 numpy
-ultralytics
-flask
+pillow
