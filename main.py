@@ -1,22 +1,19 @@
 import flet as ft
 import json
 import os
-import torch
 import numpy as np
-import cv2
 import sqlite3
-from ultralytics import YOLO
 from PIL import Image
 import io
-import base64
 from datetime import datetime
+import tensorflow.lite as tflite
+import asyncio
 
-model = YOLO("runs/detect/train3/weights/best.pt")
 
-CLASS_NAMES = {0: "Old Coconut", 1: "Unripe Coconut", 2: "Ripe Coconut"}
+os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 DB_NAME = "coco_history.db"
-
 
 def load_theme():
     if os.path.exists("theme.json"):
@@ -74,39 +71,80 @@ def delete_history(record_id):
     conn.commit()
     conn.close()
 
+CLASS_NAMES = ["young", "unripe", "ripe", "old"]
+
+# Load TFLite model
+interpreter = tflite.Interpreter(model_path="coconut_model.tflite")
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
+
+IMG_SIZE = 224  # Ensure consistency with training
+
+def preprocess_image(image_data):
+    """
+    Preprocess the input image to match the MobileNetV2 training format.
+    - Resizes to 224x224
+    - Normalizes pixel values (1./255)
+    - Converts to float32
+    - Expands batch dimension
+    """
+    image = Image.open(io.BytesIO(image_data)).convert("RGB")
+    image = image.resize((IMG_SIZE, IMG_SIZE))  # Resize to model input
+    image_array = np.array(image, dtype=np.float32) / 255.0  # Normalize
+    image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
+
+    return image_array.astype(np.float32)
+
 def detect_objects(image_data):
-    image = Image.open(io.BytesIO(image_data))
-    image = np.array(image)
-    results = model(image)
-    detection_text = ""
-    
-    for result in results:
-        boxes = result.boxes.xyxy.cpu().numpy()
-        classes = result.boxes.cls.cpu().numpy()
-        confs = result.boxes.conf.cpu().numpy()
-        
-        for box, cls, conf in zip(boxes, classes, confs):
-            x1, y1, x2, y2 = map(int, box)
-            label = f"{CLASS_NAMES.get(int(cls), 'Unknown')} ({conf:.2f})"
-            detection_text += f"{label}\n"
-            cv2.rectangle(image, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(image, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-    
-    _, encoded_image = cv2.imencode(".png", image)
-    base64_image = base64.b64encode(encoded_image.tobytes()).decode("utf-8")
+    """
+    Runs inference on the preprocessed image and returns the predicted class with confidence scores.
+    """
+    # Preprocess the image
+    input_data = preprocess_image(image_data)
 
-    # Save detection result to history
-    save_to_history(base64_image, detection_text)
+    # Ensure correct tensor format (uint8 or float32)
+    if input_details[0]['dtype'] == np.uint8:
+        input_data = (input_data * 255).astype(np.uint8)  # Convert back to uint8 if needed
 
-    return f"data:image/png;base64,{base64_image}", detection_text
+    # Set input tensor
+    interpreter.set_tensor(input_details[0]['index'], input_data)
+    interpreter.invoke()
+
+    # Get output tensor
+    output_data = interpreter.get_tensor(output_details[0]['index'])[0]  # Extract first batch output
+
+    # Apply softmax ONLY IF needed (if output is raw logits)
+    if np.max(output_data) > 1.0:
+        output_probs = np.exp(output_data - np.max(output_data)) / np.sum(np.exp(output_data - np.max(output_data)))  # Stable softmax
+    else:
+        output_probs = output_data  # Already softmaxed in model
+
+    # Extract predicted class and confidence
+    predicted_class = np.argmax(output_probs)
+    confidence = output_probs[predicted_class] * 100  # Convert to percentage
+
+    # Get confidence scores for all classes
+    class_scores = {CLASS_NAMES[i]: round(float(output_probs[i]) * 100, 2) for i in range(len(CLASS_NAMES))}
+
+    # Thresholding to avoid false positives
+    min_confidence = 20  # Ensure high confidence before accepting result
+    if confidence < min_confidence:
+        result_text = f"Uncertain Prediction (Low Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(class_scores, indent=2)}"
+    else:
+        result_text = f"Predicted: {CLASS_NAMES[predicted_class]} (Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(class_scores, indent=2)}"
+
+    return result_text
+
 
 def main(page: ft.Page):
     page.title = "CocoSense - Coconut Ripeness Detection"
-    page.theme_mode = load_theme()  # Load the saved theme
+    page.theme_mode = load_theme()
     page.window.maximizable = True
-    page.window.height = 700
+    page.window.height = 650
     page.window.width = 350
     page.window.resizable = True
+
 
     def toggle_theme():
         new_theme = "dark" if page.theme_mode == "light" else "light"
@@ -129,36 +167,26 @@ def main(page: ft.Page):
         page.views.append(content)
         page.update()
 
-    def get_started_page():
-        return ft.Column([
+    async def get_started_page(page):
+        loading_content = ft.Column([
             ft.Container(
                 content=ft.Image(
                     src="assets/coconut.png",
-                    width=page.window.width,
-                    height=page.window.height,
                     fit=ft.ImageFit.CONTAIN
                 ),
                 expand=True
             ),
-            ft.Container(
-                content=ft.Column([
-                    ft.Stack([
-                        ft.Text("Welcome to CocoSense", size=35, weight="bold", text_align=ft.TextAlign.CENTER, color=ft.colors.INVERSE_SURFACE)
-                    ]),
-                    ft.Container(
-                        content=ft.ElevatedButton(
-                            "Get Started",
-                            on_click=lambda _: navigate_to("Home"),
-                            style=ft.ButtonStyle(bgcolor="green", color="white", padding=30)
-                        ),
-                        alignment=ft.alignment.bottom_center,
-                        padding=50
-                    )
-                ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=20),
-                expand=True,
-                padding=40,
-            )
+            ft.Stack([
+                ft.Text("Welcome to CocoSense", size=35, weight="bold", text_align=ft.TextAlign.CENTER, color=ft.colors.INVERSE_SURFACE)
+            ])
         ], expand=True)
+        
+        page.views.append(ft.View("Get Started", [loading_content]))
+        page.update()
+
+        await asyncio.sleep(2)
+            
+        navigate_to("Home")
 
     def home_page():
         return ft.View("Home", [
@@ -169,7 +197,7 @@ def main(page: ft.Page):
                 padding=ft.padding.only(top=40)
             ),
             ft.Image(
-                src="assets/coconut.png",  # Use local file
+                src="assets/coconut.png",
                 width=350,
                 height=180,
                 fit=ft.ImageFit.FILL
@@ -180,7 +208,7 @@ def main(page: ft.Page):
                         ft.Icon(ft.icons.SEARCH, size=50, color="black"),
                         ft.Text("DETECTION",color=ft.colors.SURFACE)
                     ], alignment=ft.MainAxisAlignment.CENTER),
-                    bgcolor="lightgreen",
+                    bgcolor=ft.colors.LIGHT_GREEN,
                     padding=20,
                     border_radius=10,
                     on_click=lambda _: navigate_to("Detection"),
@@ -193,7 +221,7 @@ def main(page: ft.Page):
                         ft.Icon(ft.icons.HISTORY, size=50, color="black"),
                         ft.Text("HISTORY",color=ft.colors.SURFACE)
                     ], alignment=ft.MainAxisAlignment.CENTER),
-                    bgcolor="lightblue",
+                    bgcolor=ft.colors.LIGHT_BLUE,
                     padding=20,
                     border_radius=10,
                     on_click=lambda _: navigate_to("History"),
@@ -204,7 +232,7 @@ def main(page: ft.Page):
                         ft.Icon(ft.icons.SETTINGS, size=50, color="black"),
                         ft.Text("SETTINGS",color=ft.colors.SURFACE)
                     ], alignment=ft.MainAxisAlignment.CENTER),
-                    bgcolor="yellow",
+                    bgcolor=ft.colors.YELLOW,
                     padding=20,
                     border_radius=10,
                     on_click=lambda _: navigate_to("Settings"),
@@ -214,32 +242,38 @@ def main(page: ft.Page):
         ])
 
     def detection_page(page):
-        # Remove the image display since we only want to show the text result.
         detection_result = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
+        selected_image = ft.Image(width=300, height=300, fit=ft.ImageFit.CONTAIN,)
+        file_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files))
+        page.overlay.append(file_picker)
 
         def process_selected_image(files):
             if files:
                 file_path = files[0].path
                 with open(file_path, "rb") as f:
                     image_data = f.read()
-                processed_image_base64, result_text = detect_objects(image_data)
+
+                # Detect objects
+                result_text = detect_objects(image_data)
                 detection_result.value = result_text
+                selected_image.src = file_path
+                
+                # Save result to history (image and result text)
+                save_to_history(image_data, result_text)  # Saving the result in the database
+                
                 dialog.open = True
                 page.update()
-
-        file_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files))
-        page.overlay.append(file_picker)
 
         dialog = ft.AlertDialog(
             title=ft.Text("Detection Result"),
             content=ft.Column([
-                detection_result  # Just show the detection result here.
-            ], alignment=ft.MainAxisAlignment.CENTER),
+                selected_image,
+                detection_result,
+            ],expand=True, alignment=ft.MainAxisAlignment.CENTER),
             actions=[
                 ft.TextButton("OK", on_click=lambda _: setattr(dialog, 'open', False) or page.update())
             ]
         )
-
         page.overlay.append(dialog)
 
         return ft.View("Detection", [
@@ -253,7 +287,7 @@ def main(page: ft.Page):
             ft.Text("Select an image to analyze coconut ripeness.", size=20),
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.icons.SEARCH, size=80, color="black"),
+                    ft.Icon(ft.icons.SEARCH, size=100, color="black"),
                     ft.Text("Tap to Select Image", size=24, weight=ft.FontWeight.BOLD),
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
                 bgcolor="lightgreen",
@@ -262,7 +296,8 @@ def main(page: ft.Page):
                 on_click=lambda _: file_picker.pick_files(allow_multiple=False),
                 height=300,
             )
-    ])
+        ])
+
     def settings_page():
         return ft.View("Settings", [
             ft.Container(
@@ -318,6 +353,7 @@ def main(page: ft.Page):
             ft.Container(
                 content=ft.Row([
                     ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Settings")),
+                    ft.Text("CONTACT US", size=30, weight=ft.FontWeight.BOLD)
                 ]),
                 padding=ft.padding.only(top=40)
             ),
@@ -348,9 +384,7 @@ def main(page: ft.Page):
             ], expand=True, spacing=20, padding=20)
         ])
 
-    # Start the app on the Get Started screen
-    page.views.append(ft.View("Get Started", [get_started_page()]))
-    page.update()
+    asyncio.run(get_started_page(page)) 
 
 ft.app(target=main, assets_dir="assets")
 
