@@ -3,4 +3,4 @@ kivy
 flet
 numpy
 pillow
-tflite_runtime
+tflite-runtime
