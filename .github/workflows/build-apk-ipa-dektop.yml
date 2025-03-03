@@ -174,42 +174,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout code
+    - name: Checkout Repository
       uses: actions/checkout@v4
 
     - name: Setup Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v5
       with:
-        python-version: ${{ env.PYTHON_VERSION }}
+        python-version: "3.9"  # Change to 3.9 for compatibility with tflite-runtime
 
-    - name: Install Python Dependencies
+    - name: Install Buildozer and Dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-
-    - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: ${{ env.FLUTTER_VERSION }}
-
-    - name: Setup Java JDK
-      uses: actions/setup-java@v4.2.1
-      with:
-        distribution: 'temurin'
-        java-version: '21'
-
-    - name: Flet Build APK
+        sudo apt update && sudo apt install -y \
+          python3-pip git unzip zip openjdk-17-jdk \
+          libffi-dev libssl-dev build-essential \
+          libncurses5 libncursesw5
+          
+        pip install --upgrade pip
+        pip install --user --upgrade buildozer cython kivy kivymd numpy pillow 
+        
+    - name: Install TensorFlow Lite Runtime
       run: |
-        flutter config --no-analytics
-        flet build apk --verbose --build-number=$BUILD_NUMBER --build-version=$BUILD_VERSION
+        pip install --no-cache-dir https://github.com/google-coral/pycoral/releases/download/release-feb-2023/tflite_runtime-2.11.0-cp39-cp39-linux_x86_64.whl
+
+    - name: Initialize Buildozer
+      run: buildozer init  # Ensure buildozer.spec exists
+
+    - name: Build APK
+      run: buildozer -v android debug
 
     - name: Upload APK Artifact
       uses: actions/upload-artifact@v4.3.4
       with:
         name: apk-build-artifact
-        path: build/apk
+        path: bin/*.apk
         if-no-files-found: warn
         overwrite: false
+
 
   build-ipa:
     runs-on: macos-latest
