@@ -14,7 +14,7 @@ on:
 env:
   BUILD_NUMBER: 1
   BUILD_VERSION: 1.0.0
-  PYTHON_VERSION: 3.10  # Using Python 3.10 for tflite-runtime
+  PYTHON_VERSION: 3.11  # Using Python 3.11 for compatibility
   FLUTTER_VERSION: 3.22.2
 
 jobs:
