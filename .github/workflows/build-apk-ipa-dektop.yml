@@ -34,7 +34,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install https://github.com/google-coral/pycoral/releases/download/release-frogfish/tflite_runtime-2.13.0-cp310-cp310-manylinux2014_x86_64.whl
+        pip install tflite-runtime
 
     - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
@@ -77,7 +77,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install https://github.com/google-coral/pycoral/releases/download/release-frogfish/tflite_runtime-2.13.0-cp310-cp310-macosx_10_15_x86_64.whl
+        pip install tflite-runtime
 
     - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
@@ -113,7 +113,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install https://github.com/google-coral/pycoral/releases/download/release-frogfish/tflite_runtime-2.13.0-cp310-cp310-win_amd64.whl
+        pip install tflite-runtime
 
     - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
@@ -149,7 +149,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install https://github.com/google-coral/pycoral/releases/download/release-frogfish/tflite_runtime-2.13.0-cp310-cp310-manylinux2014_x86_64.whl
+        pip install tflite-runtime
 
     - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
@@ -172,41 +172,5 @@ jobs:
       with:
         name: apk-build-artifact
         path: build/apk
-        if-no-files-found: warn
-        overwrite: false
-
-  build-ipa:
-    runs-on: macos-latest
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Setup Python ${{ env.PYTHON_VERSION }}
-      uses: actions/setup-python@v5
-      with:
-        python-version: ${{ env.PYTHON_VERSION }}
-
-    - name: Install Python Dependencies (Including TFLite)
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install https://github.com/google-coral/pycoral/releases/download/release-frogfish/tflite_runtime-2.13.0-cp310-cp310-macosx_10_15_x86_64.whl
-
-    - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
-      uses: subosito/flutter-action@v2
-      with:
-        flutter-version: ${{ env.FLUTTER_VERSION }}
-
-    - name: Flet Build IPA
-      run: |
-        flutter config --no-analytics
-        flet build ipa --verbose --build-number=$BUILD_NUMBER --build-version=$BUILD_VERSION 
-
-    - name: Upload IPA Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: ipa-build-artifact
-        path: build/ipa
         if-no-files-found: warn
         overwrite: false
