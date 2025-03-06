@@ -16,6 +16,7 @@ env:
   BUILD_VERSION: 1.0.0
   PYTHON_VERSION: 3.10.12
   FLUTTER_VERSION: 3.27.4
+  ANDROID_SDK_ROOT: /usr/local/lib/android/sdk
 
 jobs:
   build-apk:
@@ -50,10 +51,13 @@ jobs:
       run: flutter doctor -v
 
     - name: Accept Android Licenses
-      run: yes | flutter doctor --android-licenses
+      run: yes | flutter doctor --android-licenses || true
 
-    - name: Ensure Android SDK Tools Are Installed
-      run: sdkmanager --install "platform-tools" "platforms;android-34"
+    - name: Set Up Android SDK Manually
+      run: |
+        echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT" >> $GITHUB_ENV
+        echo "PATH=$ANDROID_SDK_ROOT/cmdline-tools/latest/bin:$ANDROID_SDK_ROOT/platform-tools:$ANDROID_SDK_ROOT/emulator:$PATH" >> $GITHUB_ENV
 
     - name: Build APK
       run: |
