@@ -127,6 +127,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
+        pip install tflite-runtime buildozer cython
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
       with:
@@ -136,6 +137,12 @@ jobs:
       with:
         distribution: 'temurin'
         java-version: '21'
+    - name: Install Android SDK & NDK
+      run: |
+        sudo apt-get update -y
+        sudo apt-get install -y unzip
+        yes | sdkmanager --install "cmdline-tools;latest" "platform-tools" "platforms;android-33" "build-tools;33.0.2" "ndk;25.1.8937393"
+        echo "export ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/25.1.8937393" >> $GITHUB_ENV
     - name: Flet Build APK
       run: |
         flutter config --no-analytics
