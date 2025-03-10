@@ -1,0 +1,32 @@
+name: Build APK
+
+on:
+  push:
+    branches:
+      - main  # Trigger build on push to main branch
+  workflow_dispatch:  # Allow manual build trigger
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 🛠 Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: 🏗 Install Dependencies
+        run: |
+          sudo apt update && sudo apt install -y openjdk-17-jdk autoconf automake build-essential zip unzip
+          pip install --upgrade pip
+          pip install buildozer cython flet numpy tensorflow-lite pillow kivy
+
+      - name: 🔨 Build APK
+        run: |
+          buildozer android clean
+          buildozer -v android debug
+
+      - name: 📤 Upload APK
+        uses: actions/upload-artifact@v3
+        with:
+          name: CocoSense-APK
+          path: bin/*.apk
