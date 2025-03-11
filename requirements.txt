@@ -1,4 +1,3 @@
-kivy
 flet
 numpy
 pillow
