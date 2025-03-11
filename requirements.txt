@@ -1,4 +1,4 @@
 flet
 numpy
 pillow
-tflite-runtime
+tensorflow
