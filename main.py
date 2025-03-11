@@ -1,21 +1,21 @@
-import flet as ft
-import json
 import os
+import json
 import numpy as np
 import sqlite3
-from PIL import Image
+from PIL import Image, ImageEnhance
 import io
 from datetime import datetime
-import tensorflow.lite as tflite
+import onnxruntime as ort
+import flet as ft
 import asyncio
-
-
+from scipy.special import softmax
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 DB_NAME = "coco_history.db"
 
+# Load and Save Theme Mode
 def load_theme():
     if os.path.exists("theme.json"):
         with open("theme.json", "r") as file:
@@ -26,6 +26,7 @@ def save_theme(theme_mode):
     with open("theme.json", "w") as file:
         json.dump({"theme_mode": theme_mode}, file)
 
+# Initialize SQLite Database
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -40,8 +41,9 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()  # Ensure DB is initialized
+init_db()
 
+# Save Detection Results to History
 def save_to_history(image_data, result_text):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -53,6 +55,7 @@ def save_to_history(image_data, result_text):
     conn.commit()
     conn.close()
 
+# Retrieve History
 def get_history():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -63,6 +66,7 @@ def get_history():
     conn.close()
     return data
 
+# Delete Record from History
 def delete_history(record_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -72,69 +76,57 @@ def delete_history(record_id):
     conn.commit()
     conn.close()
 
-CLASS_NAMES = ["young", "unripe", "ripe", "old"]
+# Class Labels
+CLASS_NAMES = ["young", "mature", "old"]
 
-# Load TFLite model
-interpreter = tflite.Interpreter(model_path="coconut_model.tflite")
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
+# Load ONNX Model
+session_options = ort.SessionOptions()
+session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
+session_options.intra_op_num_threads = 4  # Optimize for multi-threading
+onnx_model = ort.InferenceSession("coconut_ripeness.onnx", sess_options=session_options)
 
-IMG_SIZE = 224  # Ensure consistency with training
+IMG_SIZE = 224  # Input image size
 
+# Preprocess Image Before Feeding into ONNX Model
 def preprocess_image(image_data):
-    """
-    Preprocess the input image to match the MobileNetV2 training format.
-    - Resizes to 224x224
-    - Normalizes pixel values (1./255)
-    - Converts to float32
-    - Expands batch dimension
-    """
     image = Image.open(io.BytesIO(image_data)).convert("RGB")
-    image = image.resize((IMG_SIZE, IMG_SIZE))  # Resize to model input
+    
+    # Apply sharpening
+    sharpness = ImageEnhance.Sharpness(image)
+    image = sharpness.enhance(2.0)
+    
+    # Apply contrast enhancement
+    contrast = ImageEnhance.Contrast(image)
+    image = contrast.enhance(1.5)
+    
+    image = image.resize((IMG_SIZE, IMG_SIZE))  # Resize to 224x224
     image_array = np.array(image, dtype=np.float32) / 255.0  # Normalize
+    image_array = np.transpose(image_array, (2, 0, 1))  # Change to (C, H, W)
     image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
-
     return image_array.astype(np.float32)
 
+# Run Inference Using ONNX Model
 def detect_objects(image_data):
-    """
-    Runs inference on the preprocessed image and returns the predicted class with confidence scores.
-    """
-    # Preprocess the image
     input_data = preprocess_image(image_data)
+    input_name = onnx_model.get_inputs()[0].name
+    output_name = onnx_model.get_outputs()[0].name
+    output_data = onnx_model.run([output_name], {input_name: input_data})[0]
+    
+    # Apply stable softmax
+    probabilities = softmax(output_data[0]) * 100  # Convert to percentage
+    results = {class_name: round(float(prob), 2) for class_name, prob in zip(CLASS_NAMES, probabilities)}
 
-    # Ensure correct tensor format (uint8 or float32)
-    if input_details[0]['dtype'] == np.uint8:
-        input_data = (input_data * 255).astype(np.uint8)  # Convert back to uint8 if needed
-
-    # Set input tensor
-    interpreter.set_tensor(input_details[0]['index'], input_data)
-    interpreter.invoke()
-
-    # Get output tensor
-    output_data = interpreter.get_tensor(output_details[0]['index'])[0]  # Extract first batch output
-
-    # Apply softmax ONLY IF needed (if output is raw logits)
-    if np.max(output_data) > 1.0:
-        output_probs = np.exp(output_data - np.max(output_data)) / np.sum(np.exp(output_data - np.max(output_data)))  # Stable softmax
-    else:
-        output_probs = output_data  # Already softmaxed in model
-
-    # Extract predicted class and confidence
-    predicted_class = np.argmax(output_probs)
-    confidence = output_probs[predicted_class] * 100  # Convert to percentage
-
-    # Get confidence scores for all classes
-    class_scores = {CLASS_NAMES[i]: round(float(output_probs[i]) * 100, 2) for i in range(len(CLASS_NAMES))}
-
-    # Thresholding to avoid false positives
-    min_confidence = 20  # Ensure high confidence before accepting result
+    # Find the highest confidence prediction
+    predicted_class = max(results, key=results.get)
+    confidence = results[predicted_class]
+    
+    min_confidence = 40  # Increased minimum confidence threshold
     if confidence < min_confidence:
-        result_text = f"Uncertain Prediction (Low Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(class_scores, indent=2)}"
+        result_text = f"Uncertain Prediction (Low Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(results, indent=2)}"
     else:
-        result_text = f"Predicted: {CLASS_NAMES[predicted_class]} (Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(class_scores, indent=2)}"
-
+        result_text = f"Predicted: {predicted_class} (Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(results, indent=2)}"
+    
+    print("Model Confidence Scores:", results)  # Debugging Output
     return result_text
 
 
@@ -211,7 +203,7 @@ def main(page: ft.Page):
                     ], alignment=ft.MainAxisAlignment.CENTER),
                     bgcolor=ft.colors.LIGHT_GREEN,
                     padding=20,
-                    border_radius=10,
+                    border_radius=30,
                     on_click=lambda _: navigate_to("Detection"),
                     expand=True
                 ),
@@ -224,7 +216,7 @@ def main(page: ft.Page):
                     ], alignment=ft.MainAxisAlignment.CENTER),
                     bgcolor=ft.colors.LIGHT_BLUE,
                     padding=20,
-                    border_radius=10,
+                    border_radius=30,
                     on_click=lambda _: navigate_to("History"),
                     expand=True
                 ),
@@ -235,7 +227,7 @@ def main(page: ft.Page):
                     ], alignment=ft.MainAxisAlignment.CENTER),
                     bgcolor=ft.colors.YELLOW,
                     padding=20,
-                    border_radius=10,
+                    border_radius=30,
                     on_click=lambda _: navigate_to("Settings"),
                     expand=True
                 )
