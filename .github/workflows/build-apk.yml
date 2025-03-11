@@ -29,10 +29,10 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install Dependencies (TensorFlow, Flet, Pillow, NumPy)
+    - name: Install Dependencies (TensorFlow, Flet, Pillow, NumPy, OpenCV)
       run: |
         pip install --upgrade pip
-        pip install tensorflow flet pillow numpy
+        pip install tensorflow flet pillow numpy opencv-python-headless
 
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
@@ -70,10 +70,10 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install Dependencies (TensorFlow, Flet, Pillow, NumPy)
+    - name: Install Dependencies (TensorFlow, Flet, Pillow, NumPy, OpenCV)
       run: |
         python -m pip install --upgrade pip
-        pip install tensorflow flet pillow numpy tflite-runtime
+        pip install tensorflow flet pillow numpy opencv-python-headless tflite-runtime
 
     - name: Setup Flutter
       uses: subosito/flutter-action@v2
@@ -105,10 +105,10 @@ jobs:
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install Dependencies (TensorFlow, Flet, Pillow, NumPy)
+    - name: Install Dependencies (TensorFlow, Flet, Pillow, NumPy, OpenCV)
       run: |
         python -m pip install --upgrade pip
-        pip install tensorflow flet pillow numpy
+        pip install tensorflow flet pillow numpy opencv-python-headless
 
     - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
@@ -133,4 +133,3 @@ jobs:
         path: build/apk
         if-no-files-found: warn
         overwrite: false
-
