@@ -101,24 +101,23 @@ jobs:
 
   build-apk:
     runs-on: ubuntu-latest
+
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Setup Python
+    - name: Setup Python ${{ env.PYTHON_VERSION }}
       uses: actions/setup-python@v5
       with:
         python-version: ${{ env.PYTHON_VERSION }}
 
-    - name: Install ONNX Runtime
+    - name: Install Python Dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install onnxruntime
+        pip install -r requirements.txt
+        pip install onnxruntime-mobile  # Ensure mobile version is installed
 
-    - name: Install Python Dependencies
-      run: pip install -r requirements.txt
-
-    - name: Setup Flutter
+    - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
       with:
         flutter-version: ${{ env.FLUTTER_VERSION }}
@@ -135,7 +134,7 @@ jobs:
         flet build apk --verbose --build-number=$BUILD_NUMBER --build-version=$BUILD_VERSION
 
     - name: Upload APK Artifact
-      uses: actions/upload-artifact@v4
+      uses: actions/upload-artifact@v4.3.4
       with:
         name: apk-build-artifact
         path: build/apk
