@@ -1,21 +1,21 @@
-import os
+import flet as ft
 import json
+import os
 import numpy as np
 import sqlite3
-from PIL import Image, ImageEnhance
+from PIL import Image
 import io
 from datetime import datetime
-import onnxruntime as ort
-import flet as ft
+import tensorflow.lite as tflite
 import asyncio
-from scipy.special import softmax
+import cv2
+
 
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
 os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 DB_NAME = "coco_history.db"
 
-# Load and Save Theme Mode
 def load_theme():
     if os.path.exists("theme.json"):
         with open("theme.json", "r") as file:
@@ -26,7 +26,6 @@ def save_theme(theme_mode):
     with open("theme.json", "w") as file:
         json.dump({"theme_mode": theme_mode}, file)
 
-# Initialize SQLite Database
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -41,9 +40,8 @@ def init_db():
     conn.commit()
     conn.close()
 
-init_db()
+init_db()  # Ensure DB is initialized
 
-# Save Detection Results to History
 def save_to_history(image_data, result_text):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -55,7 +53,6 @@ def save_to_history(image_data, result_text):
     conn.commit()
     conn.close()
 
-# Retrieve History
 def get_history():
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -66,7 +63,6 @@ def get_history():
     conn.close()
     return data
 
-# Delete Record from History
 def delete_history(record_id):
     conn = sqlite3.connect(DB_NAME)
     cursor = conn.cursor()
@@ -76,57 +72,65 @@ def delete_history(record_id):
     conn.commit()
     conn.close()
 
-# Class Labels
-CLASS_NAMES = ["young", "mature", "old"]
+CLASS_NAMES = ["young", "unripe", "ripe", "old"]
 
-# Load ONNX Model
-session_options = ort.SessionOptions()
-session_options.graph_optimization_level = ort.GraphOptimizationLevel.ORT_ENABLE_ALL
-session_options.intra_op_num_threads = 4  # Optimize for multi-threading
-onnx_model = ort.InferenceSession("coconut_ripeness.onnx", sess_options=session_options)
+# Load TFLite model
+interpreter = tflite.Interpreter(model_path="coconut_model.tflite")
+interpreter.allocate_tensors()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
-IMG_SIZE = 224  # Input image size
+IMG_SIZE = 224  # Ensure consistency with training
 
-# Preprocess Image Before Feeding into ONNX Model
+import cv2  # OpenCV for advanced image processing
+
 def preprocess_image(image_data):
     image = Image.open(io.BytesIO(image_data)).convert("RGB")
-    
-    # Apply sharpening
-    sharpness = ImageEnhance.Sharpness(image)
-    image = sharpness.enhance(2.0)
-    
-    # Apply contrast enhancement
-    contrast = ImageEnhance.Contrast(image)
-    image = contrast.enhance(1.5)
-    
-    image = image.resize((IMG_SIZE, IMG_SIZE))  # Resize to 224x224
-    image_array = np.array(image, dtype=np.float32) / 255.0  # Normalize
-    image_array = np.transpose(image_array, (2, 0, 1))  # Change to (C, H, W)
-    image_array = np.expand_dims(image_array, axis=0)  # Add batch dimension
+    image = image.resize((IMG_SIZE, IMG_SIZE))  # Resize to model input
+    image_array = np.array(image, dtype=np.uint8)
+
+    # Convert to grayscale and apply histogram equalization
+    gray = cv2.cvtColor(image_array, cv2.COLOR_RGB2GRAY)
+    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
+    equalized = clahe.apply(gray)
+
+    # Convert back to RGB
+    processed_image = cv2.cvtColor(equalized, cv2.COLOR_GRAY2RGB)
+
+    # Normalize and add batch dimension
+    image_array = processed_image.astype(np.float32) / 255.0
+    image_array = np.expand_dims(image_array, axis=0)
+
     return image_array.astype(np.float32)
 
-# Run Inference Using ONNX Model
 def detect_objects(image_data):
     input_data = preprocess_image(image_data)
-    input_name = onnx_model.get_inputs()[0].name
-    output_name = onnx_model.get_outputs()[0].name
-    output_data = onnx_model.run([output_name], {input_name: input_data})[0]
-    
-    # Apply stable softmax
-    probabilities = softmax(output_data[0]) * 100  # Convert to percentage
-    results = {class_name: round(float(prob), 2) for class_name, prob in zip(CLASS_NAMES, probabilities)}
 
-    # Find the highest confidence prediction
-    predicted_class = max(results, key=results.get)
-    confidence = results[predicted_class]
-    
-    min_confidence = 40  # Increased minimum confidence threshold
-    if confidence < min_confidence:
-        result_text = f"Uncertain Prediction (Low Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(results, indent=2)}"
+    if input_details[0]['dtype'] == np.uint8:
+        input_data = (input_data * 255).astype(np.uint8)
+
+    interpreter.set_tensor(input_details[0]['index'], input_data)
+    interpreter.invoke()
+
+    output_data = interpreter.get_tensor(output_details[0]['index'])[0]
+
+    # Use softmax if needed
+    if np.max(output_data) > 1.0:
+        output_probs = np.exp(output_data - np.max(output_data)) / np.sum(np.exp(output_data - np.max(output_data)))
     else:
-        result_text = f"Predicted: {predicted_class} (Confidence: {confidence:.2f}%)\n\nClass Scores:\n{json.dumps(results, indent=2)}"
-    
-    print("Model Confidence Scores:", results)  # Debugging Output
+        output_probs = output_data
+
+    predicted_class = np.argmax(output_probs)
+    confidence = output_probs[predicted_class] * 100
+
+    # Dynamic confidence adjustment based on conditions
+    min_confidence = 30 if np.max(output_probs) > 0.8 else 50
+
+    if confidence < min_confidence:
+        result_text = f"Low Confidence: {confidence:.2f}%\nClass Scores: {json.dumps({CLASS_NAMES[i]: round(float(output_probs[i]) * 100, 2) for i in range(len(CLASS_NAMES))}, indent=2)}"
+    else:
+        result_text = f"Predicted: {CLASS_NAMES[predicted_class]} (Confidence: {confidence:.2f}%)"
+
     return result_text
 
 
