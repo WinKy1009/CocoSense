@@ -7,8 +7,7 @@ import requests
 from datetime import datetime
 
 DB_NAME = "coco_history.db"
-API_URL = "http://127.0.0.1:8000/predict/"
-
+API_URL = "https://Werniverse-CocoSense.hf.space/predict/"
 def load_theme():
     if os.path.exists("theme.json"):
         with open("theme.json", "r") as file:
@@ -66,6 +65,9 @@ def delete_history(record_id):
     conn.close()
 
 def detect_objects(image_path):
+    API_URL = "https://Werniverse-CocoSense.hf.space/predict/"
+
+    
     with open(image_path, "rb") as file:
         response = requests.post(API_URL, files={"file": file})
 
