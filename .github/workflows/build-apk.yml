@@ -40,12 +40,6 @@ jobs:
       with:
         flutter-version: ${{ env.FLUTTER_VERSION }}
 
-    - name: Install Flutter Dependencies (TFLite)
-      run: |
-        flutter pub get
-        flutter pub add tflite_flutter
-        flutter pub add tflite_flutter_helper
-
     - name: Setup Java JDK
       uses: actions/setup-java@v4.2.1
       with:
