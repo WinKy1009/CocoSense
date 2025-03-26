@@ -34,32 +34,23 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -r requirements.txt
-        pip install tensorflow  # Install TensorFlow for model conversion
-
-    - name: Convert TensorFlow Lite Model for tflite_flutter
-      run: |
-        mkdir -p assets
-        tflite_convert --output_file=assets/coconut_model.tflite --graph_def_file=coconut_model.tflite \
-          --input_shapes=1,224,224,3 --inference_type=FLOAT --allow_custom_ops
-
-    - name: Verify Converted Model
-      run: ls -lah assets/coconut_model.tflite
 
     - name: Setup Flutter ${{ env.FLUTTER_VERSION }}
       uses: subosito/flutter-action@v2
       with:
         flutter-version: ${{ env.FLUTTER_VERSION }}
 
+    - name: Install Flutter Dependencies (TFLite)
+      run: |
+        flutter pub get
+        flutter pub add tflite_flutter
+        flutter pub add tflite_flutter_helper
+
     - name: Setup Java JDK
       uses: actions/setup-java@v4.2.1
       with:
         distribution: 'temurin'
         java-version: '21'
-
-    - name: Ensure Model is in APK Assets
-      run: |
-        mkdir -p build/flutter_assets
-        mv assets/coconut_model.tflite build/flutter_assets/
 
     - name: Flet Build APK
       run: |
