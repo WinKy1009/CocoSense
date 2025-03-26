@@ -1,20 +1,13 @@
 import flet as ft
 import json
 import os
-import numpy as np
 import sqlite3
-from PIL import Image
-import io
-from datetime import datetime
-import tensorflow.lite as tflite
 import asyncio
-import cv2
-
-
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+import requests
+from datetime import datetime
 
 DB_NAME = "coco_history.db"
+API_URL = "http://127.0.0.1:8000/predict/"
 
 def load_theme():
     if os.path.exists("theme.json"):
@@ -72,68 +65,16 @@ def delete_history(record_id):
     conn.commit()
     conn.close()
 
-CLASS_NAMES = ["young", "unripe", "ripe", "old"]
+def detect_objects(image_path):
+    with open(image_path, "rb") as file:
+        response = requests.post(API_URL, files={"file": file})
 
-# Load TFLite model
-interpreter = tflite.Interpreter(model_path="coconut_model.tflite")
-interpreter.allocate_tensors()
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-
-IMG_SIZE = 224  # Ensure consistency with training
-
-import cv2  # OpenCV for advanced image processing
-
-def preprocess_image(image_data):
-    image = Image.open(io.BytesIO(image_data)).convert("RGB")
-    image = image.resize((IMG_SIZE, IMG_SIZE))  # Resize to model input
-    image_array = np.array(image, dtype=np.uint8)
-
-    # Convert to grayscale and apply histogram equalization
-    gray = cv2.cvtColor(image_array, cv2.COLOR_RGB2GRAY)
-    clahe = cv2.createCLAHE(clipLimit=3.0, tileGridSize=(8, 8))
-    equalized = clahe.apply(gray)
-
-    # Convert back to RGB
-    processed_image = cv2.cvtColor(equalized, cv2.COLOR_GRAY2RGB)
-
-    # Normalize and add batch dimension
-    image_array = processed_image.astype(np.float32) / 255.0
-    image_array = np.expand_dims(image_array, axis=0)
-
-    return image_array.astype(np.float32)
-
-def detect_objects(image_data):
-    input_data = preprocess_image(image_data)
-
-    if input_details[0]['dtype'] == np.uint8:
-        input_data = (input_data * 255).astype(np.uint8)
-
-    interpreter.set_tensor(input_details[0]['index'], input_data)
-    interpreter.invoke()
-
-    output_data = interpreter.get_tensor(output_details[0]['index'])[0]
-
-    # Use softmax if needed
-    if np.max(output_data) > 1.0:
-        output_probs = np.exp(output_data - np.max(output_data)) / np.sum(np.exp(output_data - np.max(output_data)))
+    if response.status_code == 200:
+        result = response.json()
+        return f"Predicted: {result['class']} (Confidence: {result['confidence']:.2f}%)"
     else:
-        output_probs = output_data
-
-    predicted_class = np.argmax(output_probs)
-    confidence = output_probs[predicted_class] * 100
-
-    # Dynamic confidence adjustment based on conditions
-    min_confidence = 30 if np.max(output_probs) > 0.8 else 50
-
-    if confidence < min_confidence:
-        result_text = f"Low Confidence: {confidence:.2f}%\nClass Scores: {json.dumps({CLASS_NAMES[i]: round(float(output_probs[i]) * 100, 2) for i in range(len(CLASS_NAMES))}, indent=2)}"
-    else:
-        result_text = f"Predicted: {CLASS_NAMES[predicted_class]} (Confidence: {confidence:.2f}%)"
-
-    return result_text
-
-
+        return "Error processing image"
+    
 def main(page: ft.Page):
     page.title = "CocoSense - Coconut Ripeness Detection"
     page.theme_mode = load_theme()
@@ -205,25 +146,13 @@ def main(page: ft.Page):
                         ft.Icon(ft.icons.SEARCH, size=50, color="black"),
                         ft.Text("DETECTION",color=ft.colors.SURFACE)
                     ], alignment=ft.MainAxisAlignment.CENTER),
-                    bgcolor=ft.colors.LIGHT_GREEN,
+                    bgcolor=ft.colors.GREEN,
                     padding=20,
                     border_radius=30,
                     on_click=lambda _: navigate_to("Detection"),
                     expand=True
                 ),
-            ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
-            ft.Row([
-                ft.Container(
-                    content=ft.Column([
-                        ft.Icon(ft.icons.HISTORY, size=50, color="black"),
-                        ft.Text("HISTORY",color=ft.colors.SURFACE)
-                    ], alignment=ft.MainAxisAlignment.CENTER),
-                    bgcolor=ft.colors.LIGHT_BLUE,
-                    padding=20,
-                    border_radius=30,
-                    on_click=lambda _: navigate_to("History"),
-                    expand=True
-                ),
+
                 ft.Container(
                     content=ft.Column([
                         ft.Icon(ft.icons.SETTINGS, size=50, color="black"),
@@ -235,52 +164,63 @@ def main(page: ft.Page):
                     on_click=lambda _: navigate_to("Settings"),
                     expand=True
                 )
+
+            ], alignment=ft.MainAxisAlignment.CENTER, spacing=20),
+            ft.Row([
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon(ft.icons.HISTORY, size=50, color="black"),
+                        ft.Text("HISTORY",color=ft.colors.SURFACE)
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    bgcolor=ft.colors.RED,
+                    padding=20,
+                    border_radius=30,
+                    on_click=lambda _: navigate_to("History"),
+                    expand=True
+                ),
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon(ft.icons.CONTACT_SUPPORT, size=50, color="black"),
+                        ft.Text("HELP",color=ft.colors.SURFACE)
+                    ], alignment=ft.MainAxisAlignment.CENTER),
+                    bgcolor=ft.colors.BLUE,
+                    padding=20,
+                    border_radius=30,
+                    on_click=lambda _: navigate_to("Help"),
+                    expand=True
+                )
             ], alignment=ft.MainAxisAlignment.CENTER, spacing=20)
         ])
 
     def detection_page(page):
         detection_result = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
-        selected_image = ft.Image(width=300, height=300, fit=ft.ImageFit.CONTAIN,)
+        selected_image = ft.Image(width=300, height=300, fit=ft.ImageFit.CONTAIN)
         file_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files))
         page.overlay.append(file_picker)
 
         def process_selected_image(files):
             if files:
                 file_path = files[0].path
-                with open(file_path, "rb") as f:
-                    image_data = f.read()
-
-                # Detect objects
-                result_text = detect_objects(image_data)
+                result_text = detect_objects(file_path)
                 detection_result.value = result_text
                 selected_image.src = file_path
-                
-                # Save result to history (image and result text)
-                save_to_history(image_data, result_text)  # Saving the result in the database
-                
+                with open(file_path, "rb") as f:
+                    save_to_history(f.read(), result_text)
                 dialog.open = True
                 page.update()
 
         dialog = ft.AlertDialog(
             title=ft.Text("Detection Result"),
-            content=ft.Column([
-                selected_image,
-                detection_result,
-            ],expand=True, alignment=ft.MainAxisAlignment.CENTER),
-            actions=[
-                ft.TextButton("OK", on_click=lambda _: setattr(dialog, 'open', False) or page.update())
-            ]
+            content=ft.Column([selected_image, detection_result], expand=True),
+            actions=[ft.TextButton("OK", on_click=lambda _: setattr(dialog, 'open', False) or page.update())]
         )
         page.overlay.append(dialog)
 
         return ft.View("Detection", [
-            ft.Container(
-                content=ft.Row([
-                    ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Home")),
-                    ft.Text("DETECTION", size=30, weight=ft.FontWeight.BOLD)
-                ]),
-                padding=ft.padding.only(top=40)
-            ),
+            ft.Container(content=ft.Row([
+                ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Home")),
+                ft.Text("DETECTION", size=30, weight=ft.FontWeight.BOLD)
+            ]), padding=ft.padding.only(top=40)),
             ft.Text("Select an image to analyze coconut ripeness.", size=20),
             ft.Container(
                 content=ft.Column([
@@ -306,7 +246,6 @@ def main(page: ft.Page):
             ),
             ft.ListTile(leading=ft.Icon(ft.icons.PERSON), title=ft.Text("User Preferences"), on_click=lambda _: toggle_theme()),
             ft.ListTile(leading=ft.Icon(ft.icons.INFO), title=ft.Text("About"), on_click=lambda _: navigate_to("About")),
-            ft.ListTile(leading=ft.Icon(ft.icons.CONTACT_SUPPORT), title=ft.Text("Contact Us"), on_click=lambda _: navigate_to("Help")),
         ])
     
     def history_page(page):
@@ -349,7 +288,7 @@ def main(page: ft.Page):
         return ft.View("Contact Us", [
             ft.Container(
                 content=ft.Row([
-                    ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Settings")),
+                    ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Home")),
                     ft.Text("CONTACT US", size=30, weight=ft.FontWeight.BOLD)
                 ]),
                 padding=ft.padding.only(top=40)
