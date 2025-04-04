@@ -6,6 +6,8 @@ import asyncio
 import requests
 from datetime import datetime
 import cv2
+import base64
+import threading
 
 DB_NAME = "coco_history.db"
 API_URL = "https://Werniverse-CocoSense.hf.space/predict/"
@@ -201,9 +203,10 @@ def main(page: ft.Page):
         file_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files))
         page.overlay.append(file_picker)
 
-        # Camera picker for capturing an image
-        camera_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files), camera=True)
-        page.overlay.append(camera_picker)
+        # Function to navigate to the camera page
+        def open_camera_page():
+            page.views.append(camera_page(page))
+            page.update()
 
         def process_selected_image(files):
             if files:
@@ -216,9 +219,6 @@ def main(page: ft.Page):
                 dialog.open = True
                 page.update()
 
-        def capture_image():
-            camera_picker.pick_files(allow_multiple=False)  # Open the camera to capture an image
-
         dialog = ft.AlertDialog(
             title=ft.Text("Detection Result"),
             content=ft.Column([selected_image, detection_result], expand=True),
@@ -227,14 +227,14 @@ def main(page: ft.Page):
         page.overlay.append(dialog)
 
         return ft.View("Detection", [
-            ft.Container(content=ft.Row([
+            ft.Container(content=ft.Row([  # Navigation bar with back button
                 ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Home")),
                 ft.Text("DETECTION", size=30, weight=ft.FontWeight.BOLD)
             ]), padding=ft.padding.only(top=40)),
 
             ft.Text("Capture an image and analyze coconut ripeness.", size=20),
 
-            ft.Container(
+            ft.Container(  # Select image from device
                 content=ft.Column([
                     ft.Icon(ft.icons.IMAGE, size=100, color="black"),
                     ft.Text("Tap to Select Image", size=24, weight=ft.FontWeight.BOLD),
@@ -246,7 +246,7 @@ def main(page: ft.Page):
                 height=200,
             ),
 
-            # Button to open the camera and capture the image
+            # Button to open the camera for capturing image
             ft.Container(
                 content=ft.Column([
                     ft.Icon(ft.icons.CAMERA_ALT, size=100, color="black"),
@@ -255,9 +255,97 @@ def main(page: ft.Page):
                 bgcolor="lightblue",
                 border_radius=50,
                 alignment=ft.alignment.center,
-                on_click=lambda _: capture_image(),  # Trigger the camera capture
+                on_click=lambda _: open_camera_page(),
                 height=200,
             )
+        ])
+
+    def camera_page(page):
+        # Initially set the image with an empty source to avoid errors
+        capture_image_view = ft.Image(width=300, height=300, fit=ft.ImageFit.CONTAIN)
+
+        detection_result = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
+
+        # Function to capture a frame from the camera and update the image
+        def capture_frame():
+            cap = cv2.VideoCapture(0)
+
+            if not cap.isOpened():
+                detection_result.value = "Error: Camera not found"
+                page.update()
+                return
+            
+            # Capture frames indefinitely
+            while True:
+                ret, frame = cap.read()
+                if ret:
+                    # Convert the captured frame to base64 for displaying in Flet Image component
+                    _, buffer = cv2.imencode('.jpg', frame)
+                    encoded_image = base64.b64encode(buffer).decode("utf-8")
+
+                    # Update the image view with the new frame
+                    capture_image_view.src_base64 = f"data:image/jpeg;base64,{encoded_image}"
+                    page.update()
+
+        # Run the capture_frame function in a separate thread
+        def start_camera_thread():
+            threading.Thread(target=capture_frame, daemon=True).start()
+
+        # Function to capture and process a single frame (when the user presses Capture button)
+        def capture_and_process():
+            cap = cv2.VideoCapture(1)
+
+            if not cap.isOpened(): 
+                detection_result.value = "Error: Camera not found"
+                page.update()
+                return
+
+            ret, frame = cap.read() 
+            cap.release()
+
+            if ret:
+                image_path = "captured_image.jpg"
+                cv2.imwrite(image_path, frame)
+
+                # Convert the captured image to base64 for displaying in Flet Image component
+                with open(image_path, "rb") as image_file:
+                    encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
+
+                # Set the image src_base64 after conversion
+                capture_image_view.src_base64 = f"data:image/jpeg;base64,{encoded_image}"
+
+                result_text = detect_objects(image_path)  # Analyze image
+                save_to_history(open(image_path, "rb").read(), result_text)  # Save to history
+                detection_result.value = result_text
+
+                page.update()
+            else:
+                detection_result.value = "Error capturing image."
+                page.update()
+
+        # Start the camera thread when the page is loaded
+        start_camera_thread()
+
+        return ft.View("Camera", [
+            ft.Container(content=ft.Row([ 
+                ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Detection")),
+                ft.Text("CAPTURE IMAGE", size=30, weight=ft.FontWeight.BOLD)
+            ]), padding=ft.padding.only(top=40)),
+
+            ft.Container( 
+                content=ft.Text("Live camera feed below. Tap the button below to capture an image.", size=18),
+                padding=20
+            ),
+
+            capture_image_view,  # Display the live camera feed
+
+            ft.Container(
+                content=ft.ElevatedButton("Capture", icon=ft.icons.CAMERA, on_click=lambda _: capture_and_process(), width=200, height=80, expand=True),
+                padding=20,
+                alignment=ft.alignment.center
+            ),
+
+            detection_result
         ])
 
     def settings_page():
