@@ -5,6 +5,7 @@ import sqlite3
 import asyncio
 import requests
 from datetime import datetime
+import cv2
 
 DB_NAME = "coco_history.db"
 API_URL = "https://Werniverse-CocoSense.hf.space/predict/"
@@ -200,6 +201,10 @@ def main(page: ft.Page):
         file_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files))
         page.overlay.append(file_picker)
 
+        # Camera picker for capturing an image
+        camera_picker = ft.FilePicker(on_result=lambda e: process_selected_image(e.files), camera=True)
+        page.overlay.append(camera_picker)
+
         def process_selected_image(files):
             if files:
                 file_path = files[0].path
@@ -210,6 +215,9 @@ def main(page: ft.Page):
                     save_to_history(f.read(), result_text)
                 dialog.open = True
                 page.update()
+
+        def capture_image():
+            camera_picker.pick_files(allow_multiple=False)  # Open the camera to capture an image
 
         dialog = ft.AlertDialog(
             title=ft.Text("Detection Result"),
@@ -223,17 +231,32 @@ def main(page: ft.Page):
                 ft.IconButton(ft.icons.ARROW_BACK, on_click=lambda _: navigate_to("Home")),
                 ft.Text("DETECTION", size=30, weight=ft.FontWeight.BOLD)
             ]), padding=ft.padding.only(top=40)),
-            ft.Text("Select an image to analyze coconut ripeness.", size=20),
+
+            ft.Text("Capture an image and analyze coconut ripeness.", size=20),
+
             ft.Container(
                 content=ft.Column([
-                    ft.Icon(ft.icons.SEARCH, size=100, color="black"),
+                    ft.Icon(ft.icons.IMAGE, size=100, color="black"),
                     ft.Text("Tap to Select Image", size=24, weight=ft.FontWeight.BOLD),
                 ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
                 bgcolor="lightgreen",
                 border_radius=50,
                 alignment=ft.alignment.center,
                 on_click=lambda _: file_picker.pick_files(allow_multiple=False),
-                height=300,
+                height=200,
+            ),
+
+            # Button to open the camera and capture the image
+            ft.Container(
+                content=ft.Column([
+                    ft.Icon(ft.icons.CAMERA_ALT, size=100, color="black"),
+                    ft.Text("Capture Image", size=24, weight=ft.FontWeight.BOLD),
+                ], alignment=ft.MainAxisAlignment.CENTER, spacing=10),
+                bgcolor="lightblue",
+                border_radius=50,
+                alignment=ft.alignment.center,
+                on_click=lambda _: capture_image(),  # Trigger the camera capture
+                height=200,
             )
         ])
 
@@ -325,4 +348,3 @@ def main(page: ft.Page):
     asyncio.run(get_started_page(page)) 
 
 ft.app(target=main, assets_dir="assets")
-
