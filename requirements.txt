@@ -2,3 +2,4 @@ flet
 numpy
 pillow
 requests
+cv2
