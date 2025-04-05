@@ -266,8 +266,12 @@ def main(page: ft.Page):
 
         detection_result = ft.Text("", size=18, weight=ft.FontWeight.BOLD)
 
+        # Define cap globally so it can be closed later
+        cap = None
+
         # Function to capture a frame from the camera and update the image
         def capture_frame():
+            nonlocal cap
             cap = cv2.VideoCapture(0)
 
             if not cap.isOpened():
@@ -276,16 +280,16 @@ def main(page: ft.Page):
                 return
             
             # Capture frames indefinitely
-            while True:
+            while cap.isOpened():
                 ret, frame = cap.read()
                 if ret:
                     # Convert the captured frame to base64 for displaying in Flet Image component
                     _, buffer = cv2.imencode('.jpg', frame)
-                    encoded_image = base64.b64encode(buffer).decode("utf-8")
-
-                    # Update the image view with the new frame
-                    capture_image_view.src_base64 = f"data:image/jpeg;base64,{encoded_image}"
-                    page.update()
+                    if _:
+                        encoded_image = base64.b64encode(buffer).decode("utf-8")
+                        # Update the image view with the new frame
+                        capture_image_view.src_base64 = encoded_image  # Just the base64 part
+                        page.update()
 
         # Run the capture_frame function in a separate thread
         def start_camera_thread():
@@ -293,8 +297,11 @@ def main(page: ft.Page):
 
         # Function to capture and process a single frame (when the user presses Capture button)
         def capture_and_process():
-            cap = cv2.VideoCapture(1)
+            nonlocal cap
+            if cap is not None:
+                cap.release()  # Stop the camera feed after capturing the image
 
+            cap = cv2.VideoCapture(0)
             if not cap.isOpened(): 
                 detection_result.value = "Error: Camera not found"
                 page.update()
@@ -311,8 +318,8 @@ def main(page: ft.Page):
                 with open(image_path, "rb") as image_file:
                     encoded_image = base64.b64encode(image_file.read()).decode("utf-8")
 
-                # Set the image src_base64 after conversion
-                capture_image_view.src_base64 = f"data:image/jpeg;base64,{encoded_image}"
+                # Set the image src_base64 after conversion (without the "data:image/jpeg;base64," prefix)
+                capture_image_view.src_base64 = encoded_image  # Just the base64 part
 
                 result_text = detect_objects(image_path)  # Analyze image
                 save_to_history(open(image_path, "rb").read(), result_text)  # Save to history
